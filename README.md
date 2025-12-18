@@ -14,33 +14,13 @@ Check out [Dagster Cloud](https://dagster.io/cloud) to get started.
 
 ### Option 2: Running it locally
 
-This project uses [UV](https://docs.astral.sh/uv/) for fast, reliable Python package management. To get started:
+Start the Dagster development server:
 
-#### Prerequisites
-Install UV if you haven't already:
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-#### Installation and Development
-1. Install dependencies and set up the virtual environment:
-```bash
-uv sync --dev
-```
-
-2. Start the Dagster development server:
 ```bash
 uv run dagster dev
 ```
 
 Open http://localhost:3000 with your browser to see the project.
-
-#### Alternative: Traditional pip approach
-If you prefer using pip:
-```bash
-pip install -e ".[dev]"
-dagit
-```
 
 
 ## Learning more
@@ -104,29 +84,16 @@ Once your Dagster Daemon is running, the schedules that are turned on will start
 
 ### Adding new Python dependencies
 
-This project uses UV for dependency management. Add new dependencies to `pyproject.toml`:
+Add new dependencies using UV:
 
-```toml
-dependencies = [
-    "your-new-package>=1.0.0",
-    # ... existing packages
-]
-```
-
-Then update your environment:
 ```bash
-uv sync
+uv add your-new-package
 ```
 
 ### Testing
 
-Tests are in the `assets_dbt_python_tests` directory and you can run tests using UV:
+Tests are in the `assets_dbt_python_tests` directory and you can run tests using:
 
 ```bash
 uv run pytest assets_dbt_python_tests
-```
-
-Or using traditional pytest if you have it installed:
-```bash
-pytest assets_dbt_python_tests
 ```
