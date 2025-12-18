@@ -1,6 +1,38 @@
 [build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "assets-dbt-python"
+version = "0.1.0"
+description = "Dagster + dbt starter project"
+requires-python = ">=3.10"
+dependencies = [
+    "dagster>=1.6,<1.7",
+    "dagster-cloud>=1.6,<1.7",
+    "boto3", 
+    "dagster-dbt>=0.22,<0.23",
+    "pandas>=1.5,<2.0",
+    "numpy>=1.25,<2.0",
+    "scipy",
+    "dbt-core>=1.7,<1.8",
+    "dbt-duckdb>=1.7,<1.8", 
+    "dagster-duckdb>=0.22,<0.23",
+    "dagster-duckdb-pandas>=0.22,<0.23",
+    "packaging<22.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "dagit>=1.6,<1.7",
+    "pytest",
+]
 
 [tool.dagster]
 module_name = "assets_dbt_python"
+
+[dependency-groups]
+dev = [
+    "dagit",
+    "pytest",
+]

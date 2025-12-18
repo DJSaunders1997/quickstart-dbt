@@ -14,16 +14,10 @@ Check out [Dagster Cloud](https://dagster.io/cloud) to get started.
 
 ### Option 2: Running it locally
 
-To install this example and its Python dependencies, run:
+Start the Dagster development server:
 
 ```bash
-pip install -e ".[dev]"
-```
-
-Then, start the Dagit web server:
-
-```
-dagit
+uv run dagster dev
 ```
 
 Open http://localhost:3000 with your browser to see the project.
@@ -90,12 +84,16 @@ Once your Dagster Daemon is running, the schedules that are turned on will start
 
 ### Adding new Python dependencies
 
-You can specify new Python dependencies in `setup.py`.
+Add new dependencies using UV:
+
+```bash
+uv add your-new-package
+```
 
 ### Testing
 
-Tests are in the `assets_dbt_python_tests` directory and you can run tests using `pytest`:
+Tests are in the `assets_dbt_python_tests` directory and you can run tests using:
 
 ```bash
-pytest assets_dbt_python_tests
+uv run pytest assets_dbt_python_tests
 ```
