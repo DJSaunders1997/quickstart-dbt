@@ -1,7 +1,7 @@
 import os
 
 from assets_dbt_python.assets import forecasting, raw_data
-from dagster_dbt import dbt_cli_resource, load_assets_from_dbt_project
+from dagster_dbt import DbtCliResource, load_assets_from_dbt_project
 from dagster_duckdb_pandas import duckdb_pandas_io_manager
 
 from dagster import (
@@ -17,7 +17,7 @@ DBT_PROJECT_DIR = file_relative_path(__file__, "../dbt_project")
 DBT_PROFILES_DIR = file_relative_path(__file__, "../dbt_project/config")
 
 # all assets live in the default dbt_schema
-dbt_assets = load_assets_from_dbt_project(
+dbt_project_assets = load_assets_from_dbt_project(
     DBT_PROJECT_DIR,
     DBT_PROFILES_DIR,
     # prefix the output assets based on the database they live in plus the name of the schema
@@ -50,14 +50,15 @@ resources = {
     ),
     # this io_manager is responsible for storing/loading our pickled machine learning model
     "model_io_manager": fs_io_manager,
-    # this resource is used to execute dbt cli commands
-    "dbt": dbt_cli_resource.configured(
-        {"project_dir": DBT_PROJECT_DIR, "profiles_dir": DBT_PROFILES_DIR}
+    # dbt resource for running dbt commands
+    "dbt": DbtCliResource(
+        project_dir=DBT_PROJECT_DIR,
+        profiles_dir=DBT_PROFILES_DIR,
     ),
 }
 
 defs = Definitions(
-    assets=[*dbt_assets, *raw_data_assets, *forecasting_assets],
+    assets=[*dbt_project_assets, *raw_data_assets, *forecasting_assets],
     resources=resources,
     schedules=[
         ScheduleDefinition(job=everything_job, cron_schedule="@weekly"),

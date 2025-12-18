@@ -127,3 +127,14 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# UV package manager
+uv.lock
+
+# Database files
+*.duckdb
+*.duckdb-*
+*.db
+
+# Temporary storage
+tmp*/
