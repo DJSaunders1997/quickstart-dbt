@@ -1,0 +1,23 @@
+run_storage:
+  module: dagster_postgres.run_storage
+  class: DagsterPostgresStorage
+  config:
+    postgres_url: postgresql://dagster_user:zzzzzz@localhost:5433/dagster
+
+event_log_storage:
+  module: dagster_postgres.event_log
+  class: DagsterPostgresStorage
+  config:
+    postgres_url: postgresql://dagster_user:zzzzzz@localhost:5433/dagster
+
+schedule_storage:
+  module: dagster_postgres.schedule_storage
+  class: DagsterPostgresStorage
+  config:
+    postgres_url: postgresql://dagster_user:zzzzzz@localhost:5433/dagster
+
+compute_logs:
+  module: dagster.core.storage.local_compute_log_manager
+  class: LocalComputeLogManager
+  config:
+    base_dir: tmp/dagster_shared

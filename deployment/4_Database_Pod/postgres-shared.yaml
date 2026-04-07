@@ -1,0 +1,84 @@
+# Source: https://medium.com/@howdyservices9/postgres-on-kubernetes-k8s-bf555289831a
+# PostgreSQL Shared Database for Dagster Option 4
+# Creates: namespace, persistent volume, deployment, and service
+# Purpose: Single PostgreSQL pod for shared Dagster metadata (asset history, job runs)
+# while keeping local development experience with 'dagster dev'
+
+# Namespace for shared Dagster database resources
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dagster-dev
+---
+# Persistent storage for PostgreSQL data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: dagster-dev
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+# PostgreSQL database deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: dagster-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15
+        ports:
+        - containerPort: 5432
+        env:
+        # TODO: Move to ConfigMap and Secret for production
+        - name: POSTGRES_DB
+          value: "dagster"
+        - name: POSTGRES_USER
+          value: "dagster_user"
+        - name: POSTGRES_PASSWORD
+          value: "zzzzzz"
+        - name: PGDATA
+          value: "/var/lib/postgresql/data/pgdata"
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+---
+# Service to expose PostgreSQL within cluster
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: dagster-dev
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: 5432
+  selector:
+    app: postgres

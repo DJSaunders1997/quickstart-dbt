@@ -1,0 +1,36 @@
+# Official Helm chart deployment - production ready with separate components
+# PostgreSQL backend + multiple pods for webserver, daemon, workers
+# 
+# Reference: https://docs.dagster.io/deployment/guides/kubernetes/deploying-with-helm
+
+# PostgreSQL configuration
+postgresql:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 10Gi
+
+# Dagster webserver
+dagster-webserver:
+  replicaCount: 1
+  image:
+    tag: "1.8.12"
+  
+# Dagster daemon  
+dagster-daemon:
+  image:
+    tag: "1.8.12"
+
+# User code deployment
+dagsterUserDeployments:
+  enabled: true
+  deployments:
+    - name: "assets-dbt-python"
+      image:
+        repository: "your-repo/dagster-user-code"
+        tag: "latest"
+        pullPolicy: "IfNotPresent"
+      dagsterApiGrpcArgs:
+        - "--python-file"
+        - "/opt/dagster/app/assets_dbt_python/__init__.py"
+      port: 3030

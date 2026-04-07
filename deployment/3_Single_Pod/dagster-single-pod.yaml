@@ -1,0 +1,126 @@
+# Dagster Single Pod - all-in-one deployment for demos/dev
+# Creates: namespace + storage + single pod (webserver+daemon+SQLite) + service
+
+# Namespace
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dagster-single
+
+# Storage
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dagster-data
+  namespace: dagster-single
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+# Pod
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dagster-single-pod
+  namespace: dagster-single
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dagster-single-pod
+  template:
+    metadata:
+      labels:
+        app: dagster-single-pod
+    spec:
+      containers:
+      - name: dagster
+        image: python:3.12-slim
+        ports:
+        - containerPort: 3000
+          name: webserver
+        env:
+        - name: DAGSTER_HOME
+          value: "/opt/dagster/dagster_home"
+        - name: PYTHONPATH
+          value: "/opt/dagster/app"
+        volumeMounts:
+        - name: dagster-data
+          mountPath: /opt/dagster/dagster_home
+        - name: app-code
+          mountPath: /opt/dagster/app
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -e
+            
+            # Create basic Dagster config inline (no ConfigMap needed)
+            mkdir -p /opt/dagster/dagster_home/storage /opt/dagster/dagster_home/logs
+            
+            cat > /opt/dagster/dagster_home/dagster.yaml << EOF
+            storage:
+              sqlite:
+                base_dir: /opt/dagster/dagster_home/storage
+            run_launcher:
+              module: dagster._core.launcher
+              class: DefaultRunLauncher
+            run_coordinator:
+              module: dagster._core.run_coordinator
+              class: DefaultRunCoordinator
+            compute_logs:
+              module: dagster._core.storage.local_compute_log_manager
+              class: LocalComputeLogManager
+              config:
+                base_dir: /opt/dagster/dagster_home/logs
+            EOF
+            
+            cat > /opt/dagster/dagster_home/workspace.yaml << EOF
+            load_from:
+              - python_module: assets_dbt_python
+            EOF
+            
+            echo "Installing Dagster and dependencies..."
+            pip install dagster dagster-webserver dagster-dbt dbt-core dbt-duckdb pandas
+            
+            echo "Installing your project..."
+            cd /opt/dagster/app
+            pip install -e .
+            
+            echo "Starting Dagster webserver and daemon..."
+            dagster-daemon run &
+            exec dagster-webserver -h 0.0.0.0 -p 3000
+      volumes:
+      - name: dagster-data
+        persistentVolumeClaim:
+          claimName: dagster-data
+      - name: app-code
+        emptyDir: {}
+      initContainers:
+      - name: copy-code
+        image: busybox
+        command: ['sh', '-c', 'echo "Init container - code will be mounted by user"']
+        volumeMounts:
+        - name: app-code
+          mountPath: /opt/dagster/app
+
+# Service
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dagster-webserver
+  namespace: dagster-single
+spec:
+  selector:
+    app: dagster-single-pod
+  ports:
+  - name: webserver
+    port: 3000
+    targetPort: 3000
+  type: ClusterIP

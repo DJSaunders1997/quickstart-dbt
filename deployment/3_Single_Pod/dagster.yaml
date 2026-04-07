@@ -1,0 +1,20 @@
+# Dagster configuration for single pod deployment
+# This matches the configuration used inside the Kubernetes pod
+
+storage:
+  sqlite:
+    base_dir: /opt/dagster/dagster_home/storage
+
+run_launcher:
+  module: dagster._core.launcher
+  class: DefaultRunLauncher
+
+run_coordinator:
+  module: dagster._core.run_coordinator
+  class: DefaultRunCoordinator
+
+compute_logs:
+  module: dagster._core.storage.local_compute_log_manager
+  class: LocalComputeLogManager
+  config:
+    base_dir: /opt/dagster/dagster_home/logs

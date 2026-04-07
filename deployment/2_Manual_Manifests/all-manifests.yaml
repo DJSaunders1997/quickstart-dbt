@@ -1,0 +1,523 @@
+# =============================================================================
+# DAGSTER KUBERNETES MANUAL MANIFESTS
+# =============================================================================
+#
+# This file contains all Kubernetes manifests needed to deploy Dagster
+# without Helm, giving full control over the deployment configuration.
+#
+# DEPLOYMENT ARCHITECTURE:
+# - PostgreSQL database for metadata storage
+# - Dagster webserver for the UI (port 3000)
+# - Dagster daemon for scheduling and sensors
+# - User code deployment running your dbt+Python assets
+# - Proper RBAC for Kubernetes job execution
+#
+# USAGE:
+#   kubectl apply -f all-manifests.yaml
+#
+# COMPONENTS INCLUDED:
+# 1. Namespace and RBAC setup
+# 2. PostgreSQL database with persistent storage
+# 3. Dagster configuration (run launcher, storage, etc.)
+# 4. Dagster webserver deployment and service
+# 5. Dagster daemon for background processing
+# 6. User code deployment with GRPC server
+#
+# =============================================================================
+
+# =============================================================================
+# 1. NAMESPACE AND RBAC SETUP
+# =============================================================================
+# Creates isolated namespace and service account with minimal required
+# permissions for Dagster to manage Kubernetes jobs and pods
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dagster
+
+---
+# Service account used by Dagster components
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dagster
+  namespace: dagster
+
+---
+# Role defining what Dagster can do in Kubernetes
+# Allows creating/managing pods and jobs for run execution
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dagster-role
+  namespace: dagster
+rules:
+  # Pod management for job execution
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "pods/status"]
+  verbs: ["get", "list", "watch", "create", "delete"]
+  # Access to configuration
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list"]
+  # Batch job management
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["get", "list", "watch", "create", "delete"]
+
+---
+# Bind the role to the service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dagster-rolebinding
+  namespace: dagster
+subjects:
+- kind: ServiceAccount
+  name: dagster
+  namespace: dagster
+roleRef:
+  kind: Role
+  name: dagster-role
+  apiGroup: rbac.authorization.k8s.io
+
+# =============================================================================
+# 2. POSTGRESQL DATABASE
+# =============================================================================
+# PostgreSQL stores Dagster metadata (runs, events, schedules, etc.)
+# Uses emptyDir for demo - replace with PVC for production
+
+---
+# PostgreSQL configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: dagster
+data:
+  POSTGRES_DB: "dagster"
+  POSTGRES_USER: "dagster_user"
+  POSTGRES_PASSWORD: "dagster_pass"
+
+---
+# PostgreSQL deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: dagster
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:13
+        ports:
+        - containerPort: 5432
+        envFrom:
+        - configMapRef:
+            name: postgres-config
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      # WARNING: emptyDir storage is ephemeral!
+      # Use PersistentVolumeClaim for production
+      - name: postgres-storage
+        emptyDir: {}
+
+---
+# PostgreSQL service for internal cluster access
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: dagster
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+  type: ClusterIP
+
+# =============================================================================
+# 3. DAGSTER CONFIGURATION
+# =============================================================================
+# Core Dagster configuration defining how runs execute and where data is stored
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dagster-config
+  namespace: dagster
+data:
+  dagster.yaml: |
+    # How to launch job runs (K8s launcher creates pods for each run)
+    run_launcher:
+      module: dagster_k8s.launcher
+      class: K8sRunLauncher
+      config:
+        service_account_name: dagster
+        job_namespace: dagster
+        image_pull_policy: Always
+        env_config_maps:
+          - dagster-config
+          - postgres-config
+
+    # Queue runs instead of immediate execution
+    run_coordinator:
+      module: dagster.core.run_coordinator
+      class: QueuedRunCoordinator
+
+    # PostgreSQL for metadata storage (runs, events, schedules)
+    storage:
+      postgres:
+        postgres_db:
+          hostname: postgres
+          port: 5432
+          username: dagster_user
+          password: dagster_pass
+          db_name: dagster
+
+    # Store compute logs in Kubernetes
+    compute_logs:
+      module: dagster_k8s.storage
+      class: K8sComputeLogManager
+
+    # Local artifact storage (use S3/GCS for production)
+    local_artifact_storage:
+      module: dagster.core.storage.root
+      class: LocalArtifactStorage
+      config:
+        base_dir: "/tmp/dagster"
+
+# =============================================================================
+# 4. DAGSTER WEBSERVER
+# =============================================================================
+# The Dagster UI that you access in your browser at localhost:3000
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dagster-webserver
+  namespace: dagster
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dagster-webserver
+  template:
+    metadata:
+      labels:
+        app: dagster-webserver
+    spec:
+      serviceAccountName: dagster
+      containers:
+      - name: dagster-webserver
+        image: dagster/dagster-k8s:1.8.7
+        command: ["dagster-webserver"]
+        args:
+          - -h
+          - "0.0.0.0"
+          - -p
+          - "3000"
+          - -w
+          - "/opt/dagster/app/workspace.yaml"
+        ports:
+        - containerPort: 3000
+        # PostgreSQL connection configuration
+        env:
+        - name: DAGSTER_POSTGRES_HOST
+          value: postgres
+        - name: DAGSTER_POSTGRES_PORT
+          value: "5432"
+        - name: DAGSTER_POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: POSTGRES_DB
+        - name: DAGSTER_POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: POSTGRES_USER
+        - name: DAGSTER_POSTGRES_PASSWORD
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: POSTGRES_PASSWORD
+        volumeMounts:
+        - name: dagster-config-volume
+          mountPath: /opt/dagster/dagster_home
+        - name: workspace-config
+          mountPath: /opt/dagster/app
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        # Health checks to ensure webserver is responding
+        livenessProbe:
+          httpGet:
+            path: /server_info
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 20
+          timeoutSeconds: 3
+        readinessProbe:
+          httpGet:
+            path: /server_info
+            port: 3000
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          timeoutSeconds: 3
+      volumes:
+      # Mount Dagster configuration
+      - name: dagster-config-volume
+        configMap:
+          name: dagster-config
+      # Mount workspace configuration (defines code locations)
+      - name: workspace-config
+        configMap:
+          name: workspace-config
+
+---
+# Service to access the webserver (use with kubectl port-forward)
+apiVersion: v1
+kind: Service
+metadata:
+  name: dagster-webserver
+  namespace: dagster
+spec:
+  selector:
+    app: dagster-webserver
+  ports:
+  - port: 3000
+    targetPort: 3000
+  type: ClusterIP
+
+---
+# Workspace configuration - tells Dagster where to find your code
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workspace-config
+  namespace: dagster
+data:
+  workspace.yaml: |
+    load_from:
+      - grpc_server:
+          host: dagster-usercode
+          port: 4000
+          location_name: "assets_dbt_python"
+
+# =============================================================================
+# 5. DAGSTER DAEMON
+# =============================================================================
+# Background service that handles schedules, sensors, and run queueing
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dagster-daemon
+  namespace: dagster
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dagster-daemon
+  template:
+    metadata:
+      labels:
+        app: dagster-daemon
+    spec:
+      serviceAccountName: dagster
+      containers:
+      - name: dagster-daemon
+        image: dagster/dagster-k8s:1.8.7
+        command: ["dagster-daemon", "run"]
+        # PostgreSQL connection configuration
+        env:
+        - name: DAGSTER_POSTGRES_HOST
+          value: postgres
+        - name: DAGSTER_POSTGRES_PORT
+          value: "5432"
+        - name: DAGSTER_POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: POSTGRES_DB
+        - name: DAGSTER_POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: POSTGRES_USER
+        - name: DAGSTER_POSTGRES_PASSWORD
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: POSTGRES_PASSWORD
+        volumeMounts:
+        - name: dagster-config-volume
+          mountPath: /opt/dagster/dagster_home
+        - name: workspace-config
+          mountPath: /opt/dagster/app
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        # Health check for daemon process
+        livenessProbe:
+          exec:
+            command:
+            - dagster
+            - api
+            - grpc-health-check
+            - -p
+            - "4000"
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+      volumes:
+      - name: dagster-config-volume
+        configMap:
+          name: dagster-config
+      - name: workspace-config
+        configMap:
+          name: workspace-config
+
+# =============================================================================
+# 6. USER CODE DEPLOYMENT
+# =============================================================================
+# Your custom dbt+Python code running as a GRPC server
+# The webserver and daemon connect to this to load your assets and jobs
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dagster-usercode
+  namespace: dagster
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dagster-usercode
+  template:
+    metadata:
+      labels:
+        app: dagster-usercode
+    spec:
+      containers:
+      - name: dagster-usercode
+        # Custom image containing your dbt project and Python code
+        # Built with the included Dockerfile
+        image: dagster-demo:latest
+        imagePullPolicy: IfNotPresent
+        command: ["dagster"]
+        args:
+          - api
+          - grpc
+          - -h
+          - "0.0.0.0"
+          - -p
+          - "4000"
+          - -m
+          - "assets_dbt_python"
+        ports:
+        - containerPort: 4000
+        env:
+        - name: DAGSTER_CURRENT_IMAGE
+          value: "dagster-demo:latest"
+        workingDir: /opt/dagster/app
+        volumeMounts:
+        - name: dbt-project
+          mountPath: /opt/dagster/app/dbt_project
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        # Health checks for GRPC server
+        livenessProbe:
+          exec:
+            command:
+            - dagster
+            - api
+            - grpc-health-check
+            - -p
+            - "4000"
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - dagster
+            - api
+            - grpc-health-check
+            - -p
+            - "4000"
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 3
+      volumes:
+      # Mount for dbt project files
+      - name: dbt-project
+        emptyDir: {}
+
+---
+# Service for internal GRPC communication
+apiVersion: v1
+kind: Service
+metadata:
+  name: dagster-usercode
+  namespace: dagster
+spec:
+  selector:
+    app: dagster-usercode
+  ports:
+  - port: 4000
+    targetPort: 4000
+  type: ClusterIP
+
+# =============================================================================
+# DEPLOYMENT COMPLETE
+# =============================================================================
+# 
+# After applying this file:
+# 1. Wait for all pods to be ready: kubectl get pods -n dagster
+# 2. Access the UI: kubectl port-forward service/dagster-webserver 3000:3000 -n dagster
+# 3. Open http://localhost:3000 in your browser
+#
+# Troubleshooting:
+# - Check pod logs: kubectl logs -n dagster <pod-name>
+# - Check pod status: kubectl describe pod -n dagster <pod-name>
+# - Verify services: kubectl get svc -n dagster
+# =============================================================================
