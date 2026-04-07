@@ -20,6 +20,7 @@ dependencies = [
     "dagster-duckdb>=0.22,<0.23",
     "dagster-duckdb-pandas>=0.22,<0.23",
     "packaging<22.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]

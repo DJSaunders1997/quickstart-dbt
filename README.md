@@ -14,6 +14,16 @@ Check out [Dagster Cloud](https://dagster.io/cloud) to get started.
 
 ### Option 2: Running it locally
 
+First, set up your environment configuration:
+
+```bash
+# Copy the example environment file
+cp .env.example .env
+
+# The .env file configures Dagster to store runs in the project directory
+# You can adjust the DAGSTER_HOME path if needed
+```
+
 Start the Dagster development server:
 
 ```bash

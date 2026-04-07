@@ -1,4 +1,8 @@
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from assets_dbt_python.assets import forecasting, raw_data
 from dagster_dbt import DbtCliResource, load_assets_from_dbt_project
